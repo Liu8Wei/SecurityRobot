@@ -10,3 +10,6 @@ R_MOTOR_REV = 23
 # 3. IR Sensor Pins
 SENSOR_LEFT = 5
 SENSOR_RIGHT = 6
+
+# 4. Monitoring Pins
+battery_v_pin = 10  # Virtual Pin for Battery display

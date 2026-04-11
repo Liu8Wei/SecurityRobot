@@ -1,27 +1,23 @@
+# sensors/proximity.py
 import time
+# Note: You'll need to add your GPIO library here later (e.g., from gpiozero import DistanceSensor)
 
-# Thresholds (in centimeters)
-STOP_DISTANCE = 20.0  # Stop if something is closer than 20cm
-WARNING_DISTANCE = 50.0 # Slow down if something is closer than 50cm
+STOP_DISTANCE = 20.0 
+WARNING_DISTANCE = 50.0
 
 def get_distance():
-    """
-    Simulates reading the Ultrasonic Sensor.
-    Once you have the RP02W, we will put the real GPIO code here.
-    """
-    # For now, we 'fake' a safe distance
-    return 100.0 
+    # Placeholder: In the real world, this reads the GPIO pins
+    # For testing, we return a fixed value
+    return 25.0 
 
-def is_path_clear():
+def get_status():
     dist = get_distance()
     if dist < STOP_DISTANCE:
-        return False
-    return True
+        return "DANGER"
+    elif dist < WARNING_DISTANCE:
+        return "WARNING"
+    else:
+        return "CLEAR"
 
-def check_pir():
-    """
-    Simulates the PIR motion sensor.
-    Returns True if motion is detected.
-    """
-    # Fake: No motion detected
-    return False
+def is_path_clear():
+    return get_distance() > STOP_DISTANCE
