@@ -84,7 +84,7 @@ def handle_snapshot(value):
     if int(value[0]) == 1:
         print("📸 SNAPSHOT: Capturing image...")
         # camera.capture_image("snapshot.jpg") # Hypothetical library call
-        blynk.virtual_write(V11, "Snapshot saved to D:/SecurityRobot/Captures")
+        blynk.virtual_write("V11", "Snapshot saved to D:/SecurityRobot/Captures")
 
 def handle_recording(value):
     global is_recording
