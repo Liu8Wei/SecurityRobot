@@ -12,7 +12,7 @@ current_x = 0       # Stores Left/Right value
 current_y = 0       # Stores Forward/Backward value
 master_speed = 255  # The "Throttle" set by your Web Slider
 is_recording = False
-
+is_lockdown = False
 
 # --- THE MOTOR MIXING ENGINE ---
 # This is the "Math Room". It takes X and Y and decides how fast wheels spin.
@@ -82,36 +82,76 @@ def handle_op_mode(value):
 
 def handle_snapshot(value):
     if int(value[0]) == 1:
-        print("📸 SNAPSHOT: Capturing image...")
-        # camera.capture_image("snapshot.jpg") # Hypothetical library call
-        blynk.virtual_write("V11", "Snapshot saved to D:/SecurityRobot/Captures")
+        timestamp = time.strftime("%H:%M:%S")
+        filename = f"snap_{timestamp}.jpg"
+        
+        # 1. Update the EXISTING V6 System Status
+        log_msg = f"📸 [{timestamp}] SNAPSHOT SAVED"
+        blynk.virtual_write("V6", log_msg)
+        print(f"Log sent to V6: {log_msg}")
+        img_url = "https://placehold.co/600x400?text=Intruder+Captured" # Test URL
+        blynk.virtual_write("V11", 1, img_url)
+        print("Gallery updated at index 1")
 
+       
 def handle_recording(value):
     global is_recording
     is_recording = True if int(value[0]) == 1 else False
-    status = "STARTED" if is_recording else "STOPPED"
-    print(f"📹 VIDEO: Recording {status}")
-    # camera.toggle_record(is_recording)
+    
+    timestamp = time.strftime("%H:%M:%S")
+    status_text = "📹 RECORDING: ON" if is_recording else "📹 RECORDING: OFF"
+    print(status_text)
+    # Update the EXISTING V6 System Status
+    blynk.virtual_write("V6", status_text)
+    print(f"Log sent to V6: {status_text}")
 
 def update_battery():
     # Simulated Battery Math: Read voltage from ADC
     # V_max = 12.6V, V_min = 9.0V
     current_voltage = 11.8 # This would come from your ADC sensor
     percentage = round(((current_voltage - 9.0) / (12.6 - 9.0)) * 100)
-    blynk.virtual_write(battery_v_pin, percentage)
+    blynk.virtual_write("V4", percentage)
     
     # Critical Alert if battery is low
     if percentage < 20:
         blynk.log_event("low_battery_alert", f"Robot needs charging! {percentage}%")
 
+def handle_alarm_mode(value):
+    global is_lockdown, current_x, current_y
+    
+    # Toggle Logic: 1 = Alarm Triggered, 0 = False Alarm/All Clear
+    if int(value[0]) == 1:
+        is_lockdown = True
+        print("🚨 LOCKDOWN: Starting Evidence Collection...")
+        
+        # 1. Stop Motors immediately for clear photos
+        current_x, current_y = 0, 0
+        # motors.emergency_stop() 
+        blynk.virtual_write("V10", 255)
+        
+        # 2. Update Status Log
+        timestamp = time.strftime("%H:%M:%S")
+        blynk.virtual_write("V6", f"🚨 [{timestamp}] ALARM: Investigating...")
+        
+        # 3. Trigger Evidence (Call your functions)
+        handle_snapshot([1]) # Manually trigger snapshot
+        # handle_recording([1]) # Start recording
+        
+    else:
+        is_lockdown = False
+        print("🛡️ RESET: Returning to normal operation.")
+        blynk.virtual_write("V6", f"✅ [{time.strftime('%H:%M:%S')}] ALL CLEAR")
+        # handle_recording([0]) # Stop recording
+        blynk.virtual_write("V10", 0) # Turn off alert LED
 
 # --- REGISTRATION ---
 blynk.on("V1", handle_navigation_x) 
 blynk.on("V5", handle_navigation_y) 
 blynk.on("V2", handle_op_mode)      
 blynk.on("V9", handle_master_speed) 
-blynk.on("V3", handle_snapshot)  # Push button for Snapshot
-blynk.on("V4", handle_recording) # Switch for Recording
+blynk.on("V7", handle_snapshot)  # Push button for Snapshot
+blynk.on("V8", handle_recording) # Switch for Recording
+blynk.on("V3", handle_alarm_mode)
 
 print("SYSTEM READY: Listening for commands...")
 
@@ -135,3 +175,9 @@ while True:
 
     if is_auto_mode:
         time.sleep(0.1)
+
+    if is_lockdown:
+        # Optional: Add code here to rotate the robot 
+        # or sweep the sensors for better PIR coverage
+        pass
+  
