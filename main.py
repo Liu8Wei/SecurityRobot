@@ -96,14 +96,17 @@ def handle_snapshot(value):
        
 def handle_recording(value):
     global is_recording
-    is_recording = True if int(value[0]) == 1 else False
+    new_state = True if int(value[0]) == 1 else False
     
-    timestamp = time.strftime("%H:%M:%S")
-    status_text = "📹 RECORDING: ON" if is_recording else "📹 RECORDING: OFF"
-    print(status_text)
-    # Update the EXISTING V6 System Status
-    blynk.virtual_write("V6", status_text)
-    print(f"Log sent to V6: {status_text}")
+    # Only update if the state actually changed
+    if new_state != is_recording:
+        is_recording = new_state
+        timestamp = time.strftime("%H:%M:%S")
+        status_text = "📹 RECORDING: ON" if is_recording else "📹 RECORDING: OFF"
+        
+        # Update the UI so you see the change
+        blynk.virtual_write("V6", status_text)
+        print(status_text)
 
 def update_battery():
     # Simulated Battery Math: Read voltage from ADC
@@ -126,6 +129,7 @@ def handle_alarm_mode(value):
         
         # 1. Stop Motors immediately for clear photos
         current_x, current_y = 0, 0
+        blynk.virtual_write("V8", 1)
         # motors.emergency_stop() 
         blynk.virtual_write("V10", 255)
         
@@ -135,14 +139,25 @@ def handle_alarm_mode(value):
         
         # 3. Trigger Evidence (Call your functions)
         handle_snapshot([1]) # Manually trigger snapshot
-        # handle_recording([1]) # Start recording
+        handle_recording([1]) # Start recording
         
     else:
         is_lockdown = False
         print("🛡️ RESET: Returning to normal operation.")
         blynk.virtual_write("V6", f"✅ [{time.strftime('%H:%M:%S')}] ALL CLEAR")
+        print("Terminal check: All Clear sent")
+        blynk.virtual_write("V8", 0)
+        handle_recording([0])
         # handle_recording([0]) # Stop recording
         blynk.virtual_write("V10", 0) # Turn off alert LED
+
+def update_log(message):
+    timestamp = time.strftime("%H:%M:%S")
+    formatted_msg = f"[{timestamp}] {message}"
+    
+    # This sends the text TO the phone
+    blynk.virtual_write("V6", formatted_msg)
+    print(f"Log: {formatted_msg}")
 
 # --- REGISTRATION ---
 blynk.on("V1", handle_navigation_x) 
