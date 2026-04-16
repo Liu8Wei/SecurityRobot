@@ -1,4 +1,4 @@
-import BlynkLib
+import blynklib
 import time
 import config
 from sensors import proximity
@@ -172,7 +172,7 @@ def security_loop():
 
 if __name__ == "__main__":
     security_loop()
-    
+
 # --- REGISTRATION ---
 blynk.on("V1", handle_navigation_x) 
 blynk.on("V5", handle_navigation_y) 
