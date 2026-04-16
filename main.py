@@ -1,11 +1,11 @@
-import blynklib
 import time
 import config
 from sensors import proximity
 from drivers import motors
 from sensors.vision import PatrolCam
+from blynklib import Blynk
 
-blynk = BlynkLib.Blynk(config.BLYNK_AUTH, server='blynk.cloud', port=80)
+blynk = Blynk(config.BLYNK_AUTH, server='blynk.cloud', port=80)
 
 # 2. Global State Variables (The Robot's Memory)
 is_auto_mode = False
