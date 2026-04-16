@@ -3,6 +3,7 @@ import time
 import config
 from sensors import proximity
 from drivers import motors
+from sensors.vision import PatrolCam
 
 blynk = BlynkLib.Blynk(config.BLYNK_AUTH, server='blynk.cloud', port=80)
 
