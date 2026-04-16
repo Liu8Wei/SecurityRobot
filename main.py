@@ -14,6 +14,7 @@ current_y = 0       # Stores Forward/Backward value
 master_speed = 255  # The "Throttle" set by your Web Slider
 is_recording = False
 is_lockdown = False
+camera = PatrolCam()
 
 # --- THE MOTOR MIXING ENGINE ---
 # This is the "Math Room". It takes X and Y and decides how fast wheels spin.
@@ -162,6 +163,16 @@ def update_log(message):
     blynk.virtual_write("V6", formatted_msg)
     print(f"Log: {formatted_msg}")
 
+def security_loop():
+    print("PatrolBot System Active...")
+    # Example: Take a photo every time the loop runs (for testing)
+    path = camera.take_snapshot("test_patrol.jpg")
+    if path:
+        print(f"Evidence saved at: {path}")
+
+if __name__ == "__main__":
+    security_loop()
+    
 # --- REGISTRATION ---
 blynk.on("V1", handle_navigation_x) 
 blynk.on("V5", handle_navigation_y) 
