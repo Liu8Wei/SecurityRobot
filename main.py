@@ -134,6 +134,7 @@ def handle_alarm_mode(value):
         blynk.virtual_write("V10", 255)
         
         # 2. Update Status Log
+        update_log("🚨 ALARM: Investigating...")
         timestamp = time.strftime("%H:%M:%S")
         blynk.virtual_write("V6", f"🚨 [{timestamp}] ALARM: Investigating...")
         
@@ -144,6 +145,7 @@ def handle_alarm_mode(value):
     else:
         is_lockdown = False
         print("🛡️ RESET: Returning to normal operation.")
+        update_log("✅ ALL CLEAR")
         blynk.virtual_write("V6", f"✅ [{time.strftime('%H:%M:%S')}] ALL CLEAR")
         print("Terminal check: All Clear sent")
         blynk.virtual_write("V8", 0)
