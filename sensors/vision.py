@@ -1,31 +1,29 @@
-import subprocess
-import os
+import cv2
+import numpy as np
 
-class PatrolCam:
-    def __init__(self, output_path="captures/"):
-        self.output_path = output_path
-        if not os.path.exists(self.output_path):
-            os.makedirs(self.output_path)
+def identify_shape(frame):
+    # 1. Convert to HSV and Mask (Example for Green)
+    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    lower_green = np.array([35, 50, 50])
+    upper_green = np.array([90, 255, 255])
+    mask = cv2.inRange(hsv, lower_green, upper_green)
 
-    def take_snapshot(self, filename="intruder.jpg"):
-        """Captures a high-res image for evidence."""
-        full_path = os.path.join(self.output_path, filename)
-        try:
-            # Using rpicam-jpeg for the most stable capture in Trixie
-            subprocess.run([
-                "rpicam-jpeg", 
-                "-o", full_path, 
-                "-t", "1000",   # 1 second warmup
-                "--width", "1280", 
-                "--height", "720",
-                "--immediate"   # Skip preview to save CPU
-            ], check=True)
-            return full_path
-        except subprocess.CalledProcessError:
-            print("Camera Capture Failed!")
-            return None
+    # 2. Find Contours
+    contours, _ = cv2.findContours(mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    
+    for cnt in contours:
+        area = cv2.contourArea(cnt)
+        if area > 500: # Ignore tiny noise
+            # 3. Approximate the Shape
+            epsilon = 0.02 * cv2.arcLength(cnt, True)
+            approx = cv2.approxPolyDP(cnt, epsilon, True)
+            corners = len(approx)
 
-    def check_presence(self):
-        """Placeholder for future ML/Motion logic."""
-        # This is where we will later add pixel-diff or ML scans
-        pass
+            # 4. Logic by Corner Count
+            if corners == 4:
+                return "CUBOID"
+            elif 8 <= corners <= 12: # Stars can be messy, look for a range
+                return "STAR"
+            else:
+                return "CIRCULAR"
+    return "NONE"
