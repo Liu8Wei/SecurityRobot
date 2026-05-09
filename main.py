@@ -2,7 +2,7 @@ import time
 import config
 from sensors import proximity
 from drivers import motors
-from sensors.vision import PatrolCam
+from sensors import vision
 from blynklib import Blynk
 
 blynk = Blynk(config.BLYNK_AUTH, server='blynk.cloud', port=80)
@@ -12,7 +12,7 @@ is_auto_mode = False
 current_x = 0       # Stores Left/Right value
 current_y = 0       # Stores Forward/Backward value
 master_speed = 255  # The "Throttle" set by your Web Slider
-camera = PatrolCam()
+camera = cv2.VideoCapture(0)
 
 # --- THE MOTOR MIXING ENGINE ---
 # This is the "Math Room". It takes X and Y and decides how fast wheels spin.
@@ -93,16 +93,59 @@ def update_battery():
 
 def update_log(message):
     timestamp = time.strftime("%H:%M:%S")
-    formatted_msg = f"[{timestamp}] {message}"
+    formatted_msg = f"[{timestamp}] {message}\n"
     
     # This sends the text TO the phone
     blynk.virtual_write("V6", formatted_msg)
     print(f"Log: {formatted_msg}")
 
+def run_mission_test():
+    print("-" * 30)
+    print("ROBOT SYSTEM: STANDBY")
+    print("-" * 30)
+
+    # 1. Capture what the robot sees
+    ret, frame = camera.read()
+    
+    if not ret:
+        print("ERROR: Camera is unplugged or failed to turn on!")
+        return # This stops the test immediately so it doesn't crash
+    
+    # 2. Vision Identification
+    shape = vision.identify_shape(frame)
+    cx = vision.get_centroid(frame)
+    
+    # PRINT TO GUI TERMINAL
+    print(f"STATUS: Station Reached")
+    print(f"VISION: Shape Identified as [{shape}]")
+    
+    # --- LEVEL 1 (4 spaces): This belongs to the function ---
+    if cx:
+        # --- LEVEL 2 (8 spaces): This belongs to the 'if' ---
+        print(f"VISION: Object Centroid found at X={cx}")
+        
+        # 3. Platform Alignment (Aiming)
+        print("TURRET: Aligning to object...")
+        
+        while abs(cx - TARGET_X) > TOLERANCE:
+            # --- LEVEL 3 (12 spaces): This belongs to the 'while' loop ---
+            cx = vision.get_centroid(camera.get_frame())
+            print(f"TURRET: Current X={cx} | Error={cx - TARGET_X}")
+        
+        # Back to LEVEL 2 (8 spaces) because the while loop is done
+        print("TURRET: Centroid Locked.")
+
+        # 4. EXECUTE PICK
+        print("DECISION: Alignment confirmed. Starting Arm Sequence.")
+        # servos.execute_pick()
+        
+    # --- LEVEL 1 (4 spaces): This lines up perfectly with 'if cx:' ---
+    else:
+        # --- LEVEL 2 (8 spaces): This belongs to the 'else' ---
+        print("ERROR: Target lost from view!")
 
 if __name__ == "__main__":
-    security_loop()
-
+    run_mission_test()
 # --- REGISTRATION ---
 blynk.on("V1", handle_navigation_x) 
 blynk.on("V5", handle_navigation_y) 

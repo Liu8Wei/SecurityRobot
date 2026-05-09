@@ -27,3 +27,10 @@ def identify_shape(frame):
             else:
                 return "CIRCULAR"
     return "NONE"
+
+# Draw a rectangle and the center point on the frame for debugging
+cv2.rectangle(frame, (cx-20, cy-20), (cx+20, cy+20), (0, 255, 0), 2)
+cv2.putText(frame, f"ID: {shape}", (cx, cy-30), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+
+# Save it to your captures folder so you can open the file in VS Code
+cv2.imwrite('captures/current_view.jpg', frame)
