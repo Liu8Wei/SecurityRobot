@@ -4,6 +4,8 @@ from sensors import proximity
 from drivers import motors
 from sensors import vision
 from blynklib import Blynk
+import cv2
+import subprocess 
 
 blynk = Blynk(config.BLYNK_AUTH, server='blynk.cloud', port=80)
 
@@ -12,7 +14,7 @@ is_auto_mode = False
 current_x = 0       # Stores Left/Right value
 current_y = 0       # Stores Forward/Backward value
 master_speed = 255  # The "Throttle" set by your Web Slider
-camera = cv2.VideoCapture(0)
+
 
 # --- THE MOTOR MIXING ENGINE ---
 # This is the "Math Room". It takes X and Y and decides how fast wheels spin.
@@ -44,17 +46,20 @@ def process_motors():
 
 # --- BLYNK EVENT HANDLERS (The "Ears" of the robot) ---
 
+@blynk.handle_event('write V9')
 def handle_master_speed(value):
     global master_speed
     master_speed = int(value[0])
     print(f"--- Throttle set to: {round((master_speed/255)*100)}% ---")
 
+@blynk.handle_event('write V1')
 def handle_navigation_x(value):
     global current_x
     if not is_auto_mode:
         current_x = int(value[0])
         process_motors()
 
+@blynk.handle_event('write V5')
 def handle_navigation_y(value):
     global current_y, master_speed
     if not is_auto_mode:
@@ -66,6 +71,7 @@ def handle_navigation_y(value):
             current_y = raw # Handles the phone joystick normally
         process_motors()
 
+@blynk.handle_event('write V2')
 def handle_op_mode(value):
     global is_auto_mode, current_x, current_y
     # Toggle logic: 0 = AUTO, 1 = MANUAL (as we discussed)
@@ -99,15 +105,26 @@ def update_log(message):
     blynk.virtual_write("V6", formatted_msg)
     print(f"Log: {formatted_msg}")
 
+def capture_pi_frame():
+    """Bypasses OpenCV memory limits by using the native Pi camera command."""
+    # Takes a fast, low-res photo and saves it quietly
+    subprocess.run(
+        ["libcamera-jpeg", "-o", "temp.jpg", "--width", "320", "--height", "240", "--nopreview", "-t", "1"], 
+        stdout=subprocess.DEVNULL, 
+        stderr=subprocess.DEVNULL
+    )
+    # OpenCV reads the photo from the folder
+    return cv2.imread("temp.jpg")
+
 def run_mission_test():
     print("-" * 30)
     print("ROBOT SYSTEM: STANDBY")
     print("-" * 30)
 
     # 1. Capture what the robot sees
-    ret, frame = camera.read()
+    frame = capture_pi_frame()
     
-    if not ret:
+    if frame is None:
         print("ERROR: Camera is unplugged or failed to turn on!")
         return # This stops the test immediately so it doesn't crash
     
@@ -146,35 +163,36 @@ def run_mission_test():
 
 if __name__ == "__main__":
     run_mission_test()
+
 # --- REGISTRATION ---
-blynk.on("V1", handle_navigation_x) 
-blynk.on("V5", handle_navigation_y) 
-blynk.on("V2", handle_op_mode)      
-blynk.on("V9", handle_master_speed) 
+#blynk.on("V1", handle_navigation_x) 
+#blynk.on("V5", handle_navigation_y) 
+#blynk.on("V2", handle_op_mode)      
+#blynk.on("V9", handle_master_speed) 
 
 print("SYSTEM READY: Listening for commands...")
 
 while True:
     blynk.run()
 
-    # STEP 6: SAFETY CHECK (Continuous)
-    if proximity.is_blocked(threshold=15):
-        motors.stop()
-        print("Obstacle Detected - Safety Halt")
-        continue 
+    # # STEP 6: SAFETY CHECK (Continuous)
+    # if proximity.is_blocked(threshold=15):
+    #     motors.stop()
+    #     print("Obstacle Detected - Safety Halt")
+    #     continue 
 
-    if current_state == "DRIVE":
-        # Follow line... 
-        pass
+    # if current_state == "DRIVE":
+    #     # Follow line... 
+    #     pass
 
-    elif current_state == "ROTATE":
-        # Get live distance for fine-tuning if needed
-        current_dist = proximity.get_distance()
-        # ... (Camera alignment logic) ...
-        pass
+    # elif current_state == "ROTATE":
+    #     # Get live distance for fine-tuning if needed
+    #     current_dist = proximity.get_distance()
+    #     # ... (Camera alignment logic) ...
+    #     pass
         
-    elif current_state == "PICK":
-        # Execute arm sequence using drivers/servos.py
-        pass
+    # elif current_state == "PICK":
+    #     # Execute arm sequence using drivers/servos.py
+    #     pass
 
     time.sleep(0.05)

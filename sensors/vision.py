@@ -28,9 +28,15 @@ def identify_shape(frame):
                 return "CIRCULAR"
     return "NONE"
 
-# Draw a rectangle and the center point on the frame for debugging
-cv2.rectangle(frame, (cx-20, cy-20), (cx+20, cy+20), (0, 255, 0), 2)
-cv2.putText(frame, f"ID: {shape}", (cx, cy-30), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+# Add this to the bottom of sensors/vision.py
 
-# Save it to your captures folder so you can open the file in VS Code
-cv2.imwrite('captures/current_view.jpg', frame)
+def draw_debug_info(frame, cx, shape):
+    """Draws targeting lines and saves the image."""
+    # Draw a vertical line exactly where the robot thinks the center is
+    cv2.line(frame, (cx, 0), (cx, 240), (0, 255, 0), 2)
+    
+    # Write the shape name on the screen
+    cv2.putText(frame, f"ID: {shape}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+    
+    # Save the picture
+    cv2.imwrite('captures/current_view.jpg', frame)
