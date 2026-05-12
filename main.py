@@ -3,23 +3,43 @@ import config
 from sensors import proximity
 from drivers import motors
 from sensors import vision
-from blynklib import Blynk
+#from blynklib import Blynk
+import BlynkLib
 import cv2
 import subprocess 
 
-blynk = Blynk(config.BLYNK_AUTH, server='blynk.cloud', port=80)
+blynk = BlynkLib.Blynk(config.BLYNK_AUTH)
 
 # 2. Global State Variables (The Robot's Memory)
-is_auto_mode = False
+is_auto_mode = True
+mission_active = False
 current_x = 0       # Stores Left/Right value
 current_y = 0       # Stores Forward/Backward value
 master_speed = 255  # The "Throttle" set by your Web Slider
 
+@blynk.on("connected")
+def blynk_connected():
+    """Forces a Clean Boot: Resets Python logic AND the phone screen."""
+    global is_auto_mode, mission_active
+    
+    # 1. Reset the Python variables to your desired defaults
+    is_auto_mode = True 
+    mission_active = False
+    
+    # 2. Force the phone app to visually match our defaults
+    # V2 is your Auto/Manual button (assuming 1 is Auto, 0 is Manual)
+    blynk.virtual_write(2, 1) 
+    
+    # V8 is your new Start/Pause button
+    blynk.virtual_write(8, 0) 
+    
+    print("SYS: Connected to Blynk Cloud. Clean Boot initialized. Defaults set.")
 
 # --- THE MOTOR MIXING ENGINE ---
 # This is the "Math Room". It takes X and Y and decides how fast wheels spin.
 def process_motors():
     global current_x, current_y, master_speed
+    
     
     # Apply Deadzone: ignore tiny values so motors don't "hum" at rest
     x = current_x if abs(current_x) > 50 else 0
@@ -46,32 +66,63 @@ def process_motors():
 
 # --- BLYNK EVENT HANDLERS (The "Ears" of the robot) ---
 
-@blynk.handle_event('write V9')
+@blynk.on("V9")
 def handle_master_speed(value):
     global master_speed
     master_speed = int(value[0])
     print(f"--- Throttle set to: {round((master_speed/255)*100)}% ---")
 
-@blynk.handle_event('write V1')
+# @blynk.on("V1")
+# def handle_navigation_x(value):
+#     global current_x, mission_active
+#     if not mission_active:
+#         return
+#     if not is_auto_mode:
+#         current_x = int(value[0])
+#         process_motors()
+
+# @blynk.on("V5")
+# def handle_navigation_y(value):
+#     global current_y, master_speed, mission_active
+#     if not mission_active:
+#         return
+#     if not is_auto_mode:
+#         # WEB BUTTON LOGIC: If value is 1 or -1, multiply by master_speed
+#         raw = int(value[0])
+#         if raw == 1 or raw == -1:
+#             current_y = raw * master_speed
+#         else:
+#             current_y = raw # Handles the phone joystick normally
+#         process_motors()
+@blynk.on("V1")
 def handle_navigation_x(value):
     global current_x
-    if not is_auto_mode:
-        current_x = int(value[0])
-        process_motors()
+    
+    # If we are in Auto mode, ignore the joystick so it doesn't fight the camera
+    if is_auto_mode:
+        return
+        
+    current_x = int(value[0])
+    process_motors()
 
-@blynk.handle_event('write V5')
+@blynk.on("V5")
 def handle_navigation_y(value):
     global current_y, master_speed
-    if not is_auto_mode:
-        # WEB BUTTON LOGIC: If value is 1 or -1, multiply by master_speed
-        raw = int(value[0])
-        if raw == 1 or raw == -1:
-            current_y = raw * master_speed
-        else:
-            current_y = raw # Handles the phone joystick normally
-        process_motors()
+    
+    # If we are in Auto mode, ignore the joystick
+    if is_auto_mode:
+        return
+        
+    # WEB BUTTON LOGIC: If value is 1 or -1, multiply by master_speed
+    raw = int(value[0])
+    if raw == 1 or raw == -1:
+        current_y = raw * master_speed
+    else:
+        current_y = raw # Handles the phone joystick normally
+        
+    process_motors()
 
-@blynk.handle_event('write V2')
+@blynk.on("V2")
 def handle_op_mode(value):
     global is_auto_mode, current_x, current_y
     # Toggle logic: 0 = AUTO, 1 = MANUAL (as we discussed)
@@ -106,10 +157,9 @@ def update_log(message):
     print(f"Log: {formatted_msg}")
 
 def capture_pi_frame():
-    """Bypasses OpenCV memory limits by using the native Pi camera command."""
-    # Takes a fast, low-res photo and saves it quietly
+    """Bypasses OpenCV memory limits by using the proven rpicam command."""
     subprocess.run(
-        ["libcamera-jpeg", "-o", "temp.jpg", "--width", "320", "--height", "240", "--nopreview", "-t", "1"], 
+        ["rpicam-jpeg", "-o", "temp.jpg", "--width", "320", "--height", "240", "--nopreview", "-t", "1"], 
         stdout=subprocess.DEVNULL, 
         stderr=subprocess.DEVNULL
     )
@@ -117,52 +167,75 @@ def capture_pi_frame():
     return cv2.imread("temp.jpg")
 
 def run_mission_test():
+    global mission_active
+
     print("-" * 30)
-    print("ROBOT SYSTEM: STANDBY")
+    print("ROBOT SYSTEM: STANDBY. Waiting for GUI 'Start' signal...")
     print("-" * 30)
 
-    # 1. Capture what the robot sees
-    frame = capture_pi_frame()
-    
-    if frame is None:
-        print("ERROR: Camera is unplugged or failed to turn on!")
-        return # This stops the test immediately so it doesn't crash
-    
-    # 2. Vision Identification
-    shape = vision.identify_shape(frame)
-    cx = vision.get_centroid(frame)
-    
-    # PRINT TO GUI TERMINAL
-    print(f"STATUS: Station Reached")
-    print(f"VISION: Shape Identified as [{shape}]")
-    
-    # --- LEVEL 1 (4 spaces): This belongs to the function ---
-    if cx:
-        # --- LEVEL 2 (8 spaces): This belongs to the 'if' ---
-        print(f"VISION: Object Centroid found at X={cx}")
-        
-        # 3. Platform Alignment (Aiming)
-        print("TURRET: Aligning to object...")
-        
-        while abs(cx - TARGET_X) > TOLERANCE:
-            # --- LEVEL 3 (12 spaces): This belongs to the 'while' loop ---
-            cx = vision.get_centroid(camera.get_frame())
-            print(f"TURRET: Current X={cx} | Error={cx - TARGET_X}")
-        
-        # Back to LEVEL 2 (8 spaces) because the while loop is done
-        print("TURRET: Centroid Locked.")
+    while True:
+        # We must call blynk.run() constantly inside the while loop
+        # so the Pi never stops listening to your phone.
+        blynk.run() 
 
-        # 4. EXECUTE PICK
-        print("DECISION: Alignment confirmed. Starting Arm Sequence.")
-        # servos.execute_pick()
-        
-    # --- LEVEL 1 (4 spaces): This lines up perfectly with 'if cx:' ---
+        # Only scan if the operator pressed 'Start' (V8)
+        if mission_active:
+            frame = capture_pi_frame() 
+            
+            if frame is None:
+                continue # Skip and try again if camera lags
+            
+            shape = vision.identify_shape(frame)
+            cx = vision.get_centroid(frame)
+            
+            if cx:
+                print(f"\n[ALERT] Target Acquired! {shape} at X={cx}")
+                vision.draw_debug_info(frame, cx, shape)
+                
+                # --- TURRET AIMING ---
+                print("TURRET: Aligning to object...")
+                while abs(cx - TARGET_X) > TOLERANCE:
+                    blynk.run() # Keep listening during movement!
+                    
+                    if not mission_active: 
+                        print("\nGUI: E-STOP TRIGGERED. Aborting Turn!")
+                        break # Immediately stops turning if you hit pause
+                        
+                    frame = capture_pi_frame() 
+                    cx = vision.get_centroid(frame)
+                    
+                    if cx:
+                        print(f"TURRET: Current X={cx} | Error={cx - TARGET_X}", end="\r")
+                    else:
+                        print("\nWARNING: Target lost!")
+                        break 
+                
+                if cx and abs(cx - TARGET_X) <= TOLERANCE:
+                    print("\nTURRET: Centroid Locked. Target Centered.")
+                    print("DECISION: Starting Arm Sequence.")
+                    # servos.execute_pick()
+                    
+                    # Optional: Auto-pause the mission after a successful grab
+                    # so it doesn't instantly start grabbing again.
+                   
+                    mission_active = False
+                    blynk.virtual_write(8, 0) # Flip the switch on your phone to 'Off'
+
+        else:
+            # If the mission is paused, just chill out.
+            time.sleep(0.1)
+
+@blynk.on("V8")
+def toggle_mission(value):
+    """The Mission Control Switch for Active Scanning."""
+    global mission_active
+    
+    if int(value[0]) == 1:
+        mission_active = True
+        print("GUI: Mission STARTED by operator. Active Scan Engaged.")
     else:
-        # --- LEVEL 2 (8 spaces): This belongs to the 'else' ---
-        print("ERROR: Target lost from view!")
-
-if __name__ == "__main__":
-    run_mission_test()
+        mission_active = False
+        print("GUI: Mission PAUSED by operator. Turret holding.")
 
 # --- REGISTRATION ---
 #blynk.on("V1", handle_navigation_x) 
@@ -172,8 +245,8 @@ if __name__ == "__main__":
 
 print("SYSTEM READY: Listening for commands...")
 
-while True:
-    blynk.run()
+#while True:
+    #blynk.run()
 
     # # STEP 6: SAFETY CHECK (Continuous)
     # if proximity.is_blocked(threshold=15):
@@ -195,4 +268,8 @@ while True:
     #     # Execute arm sequence using drivers/servos.py
     #     pass
 
-    time.sleep(0.05)
+  #  time.sleep(0.05)
+
+if __name__ == "__main__":
+    print("SYSTEM READY: Booting Mission Protocol...")
+    run_mission_test()
