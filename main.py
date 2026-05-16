@@ -167,64 +167,46 @@ def capture_pi_frame():
     return cv2.imread("temp.jpg")
 
 def run_mission_test():
-    global mission_active
-
+    global mission_active, is_auto_mode
+    
     print("-" * 30)
     print("ROBOT SYSTEM: STANDBY. Waiting for GUI 'Start' signal...")
     print("-" * 30)
 
     while True:
-        # We must call blynk.run() constantly inside the while loop
-        # so the Pi never stops listening to your phone.
         blynk.run() 
 
-        # Only scan if the operator pressed 'Start' (V8)
-        if mission_active:
+        if mission_active and is_auto_mode:
             frame = capture_pi_frame() 
-            
             if frame is None:
-                continue # Skip and try again if camera lags
+                continue 
             
-            shape = vision.identify_shape(frame)
-            cx = vision.get_centroid(frame)
+            # The brain now tells us exactly what it sees
+            shape, cx = vision.identify_target(frame)
             
-            if cx:
-                print(f"\n[ALERT] Target Acquired! {shape} at X={cx}")
-                vision.draw_debug_info(frame, cx, shape)
+            if shape == "OTHER_CIRCULAR":
+                # It found a circle, but it is NOT blue.
+                print(f"CIRCULAR object detected (Wrong Color). Ignoring.         ", end="\r")
                 
-                # --- TURRET AIMING ---
-                print("TURRET: Aligning to object...")
-                while abs(cx - TARGET_X) > TOLERANCE:
-                    blynk.run() # Keep listening during movement!
-                    
-                    if not mission_active: 
-                        print("\nGUI: E-STOP TRIGGERED. Aborting Turn!")
-                        break # Immediately stops turning if you hit pause
-                        
-                    frame = capture_pi_frame() 
-                    cx = vision.get_centroid(frame)
-                    
-                    if cx:
-                        print(f"TURRET: Current X={cx} | Error={cx - TARGET_X}", end="\r")
-                    else:
-                        print("\nWARNING: Target lost!")
-                        break 
+            elif shape == "BLUE_CIRCULAR":
+                # It found exactly what we want!
+                print(f"\n[ALERT] BLUE CIRCULAR object confirmed at X={cx}")
+                print("DECISION: PICK")
                 
-                if cx and abs(cx - TARGET_X) <= TOLERANCE:
-                    print("\nTURRET: Centroid Locked. Target Centered.")
-                    print("DECISION: Starting Arm Sequence.")
-                    # servos.execute_pick()
-                    
-                    # Optional: Auto-pause the mission after a successful grab
-                    # so it doesn't instantly start grabbing again.
-                   
-                    mission_active = False
-                    blynk.virtual_write(8, 0) # Flip the switch on your phone to 'Off'
+                print("ACTION: Executing Arm Sequence... (2 seconds)")
+                time.sleep(2) 
+                
+                print("ACTION: Pick complete. Pausing mission.")
+                mission_active = False 
+                
+            else:
+                print("Scanning... No circular targets visible.                    ", end="\r")
+            
+            time.sleep(0.5) 
 
         else:
-            # If the mission is paused, just chill out.
-            time.sleep(0.1)
-
+            time.sleep(0.05)
+            
 @blynk.on("V8")
 def toggle_mission(value):
     """The Mission Control Switch for Active Scanning."""
