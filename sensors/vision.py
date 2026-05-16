@@ -1,50 +1,49 @@
 import cv2
 import numpy as np
 
-def identify_shape(frame):
-    """Finds a green object and returns CUBOID, STAR, or CIRCULAR."""
+def identify_target(frame):
+    """Finds ANY colored object, checks if it's a circle, then checks if it's blue."""
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-    lower_green = np.array([35, 50, 50])
-    upper_green = np.array([90, 255, 255])
-    mask = cv2.inRange(hsv, lower_green, upper_green)
-
-    contours, _ = cv2.findContours(mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
     
-    for cnt in contours:
-        area = cv2.contourArea(cnt)
-        if area > 500: # Ignore tiny noise
-            epsilon = 0.02 * cv2.arcLength(cnt, True)
-            approx = cv2.approxPolyDP(cnt, epsilon, True)
-            corners = len(approx)
-
-            if corners == 4:
-                return "CUBOID"
-            elif 8 <= corners <= 12: 
-                return "STAR"
-            else:
-                return "CIRCULAR"
-    return "NONE"
-
-def get_centroid(frame):
-    """Finds the green object and returns its exact left/right center (X-coordinate)."""
-    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-    lower_green = np.array([35, 50, 50])
-    upper_green = np.array([90, 255, 255])
-    mask = cv2.inRange(hsv, lower_green, upper_green)
+    # TRICK: Instead of a blue mask, we look at 'Saturation' (how colorful something is).
+    # White, black, and gray backgrounds have low saturation. Colored objects have high saturation.
+    _, sat_mask = cv2.threshold(hsv[:, :, 1], 70, 255, cv2.THRESH_BINARY)
     
-    contours, _ = cv2.findContours(mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-    if contours:
-        # Find the biggest green blob
-        biggest_blob = max(contours, key=cv2.contourArea)
-        if cv2.contourArea(biggest_blob) > 500:
+    contours, _ = cv2.findContours(sat_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    if not contours:
+        return "NONE", None
+
+    # Find the biggest colored blob on the screen
+    biggest_blob = max(contours, key=cv2.contourArea)
+    if cv2.contourArea(biggest_blob) > 500:
+        
+        # Figure out the Shape
+        epsilon = 0.02 * cv2.arcLength(biggest_blob, True)
+        approx = cv2.approxPolyDP(biggest_blob, epsilon, True)
+        corners = len(approx)
+
+        # If it has more than 7 corners, OpenCV considers it circular
+        if corners > 7:
+            # Find the exact center (Centroid)
             M = cv2.moments(biggest_blob)
             if M["m00"] != 0:
                 cx = int(M["m10"] / M["m00"])
-                return cx
-    return None
-
-def draw_debug_info(frame, cx, shape):
-    """Draws targeting lines and saves the image."""
-    cv2.line(frame, (cx, 0), (cx, 240), (0, 255, 0), 2)
-    cv2.putText(frame, f"ID: {shape}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
-    cv2.imwrite('captures/current_view.jpg', frame)
+                cy = int(M["m01"] / M["m00"])
+                
+                # Look at the exact pixel in the center of the circle to get its Hue (color)
+                # Ensure we don't accidentally check a pixel off the screen
+                cy = min(max(cy, 0), frame.shape[0]-1)
+                cx = min(max(cx, 0), frame.shape[1]-1)
+                
+                hue = hsv[cy, cx][0]
+                
+                # In OpenCV, Blue is a Hue between 100 and 140
+                if 100 <= hue <= 140:
+                    return "BLUE_CIRCULAR", cx
+                else:
+                    return "OTHER_CIRCULAR", cx
+                    
+        return "NON_CIRCULAR", None
+        
+    return "NONE", None
