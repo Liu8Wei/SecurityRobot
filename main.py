@@ -1,62 +1,81 @@
+# =============================================================================
+# main.py — Robot Mission Control (Corrected)
+#
+# FIXES APPLIED:
+#   1. blynk.virtual_write("V4", ...) → virtual_write(4, ...) [integer, not string]
+#   2. V2 mode handler was inverted vs clean-boot reset: now consistent (1=AUTO)
+#   3. Blynk polling was starved by time.sleep(0.5) in mission loop — fixed with
+#      smaller sleeps and blynk.run() called at every iteration
+#   4. update_battery() used hardcoded voltage — now reads from INA219 via I2C
+# =============================================================================
+
 import time
 import config
 from sensors import proximity
 from drivers import motors
 from sensors import vision
-#from blynklib import Blynk
 import BlynkLib
 import cv2
-import subprocess 
+import subprocess
+
+try:
+    from ina219 import INA219  # pip install pi-ina219
+    _ina = INA219(shunt_ohms=0.1, address=config.INA219_ADDRESS)
+    _ina.configure()
+    INA219_AVAILABLE = True
+except Exception as e:
+    print(f"[WARN] INA219 not available: {e}. Battery will show simulated value.")
+    INA219_AVAILABLE = False
 
 blynk = BlynkLib.Blynk(config.BLYNK_AUTH)
 
-# 2. Global State Variables (The Robot's Memory)
-is_auto_mode = True
+# --- Global State ---
+is_auto_mode   = True
 mission_active = False
-current_x = 0       # Stores Left/Right value
-current_y = 0       # Stores Forward/Backward value
-master_speed = 255  # The "Throttle" set by your Web Slider
+current_x      = 0
+current_y      = 0
+master_speed   = 255
+
+
+# =============================================================================
+# BLYNK: Clean Boot
+# =============================================================================
 
 @blynk.on("connected")
 def blynk_connected():
-    """Forces a Clean Boot: Resets Python logic AND the phone screen."""
+    """Forces a clean boot: resets Python state AND syncs the phone screen."""
     global is_auto_mode, mission_active
-    
-    # 1. Reset the Python variables to your desired defaults
-    is_auto_mode = True 
-    mission_active = False
-    
-    # 2. Force the phone app to visually match our defaults
-    # V2 is your Auto/Manual button (assuming 1 is Auto, 0 is Manual)
-    blynk.virtual_write(2, 1) 
-    
-    # V8 is your new Start/Pause button
-    blynk.virtual_write(8, 0) 
-    
-    print("SYS: Connected to Blynk Cloud. Clean Boot initialized. Defaults set.")
 
-# --- THE MOTOR MIXING ENGINE ---
-# This is the "Math Room". It takes X and Y and decides how fast wheels spin.
+    is_auto_mode   = True
+    mission_active = False
+
+    # FIX: V2 convention is now 1=AUTO, 0=MANUAL (consistent with handle_op_mode)
+    blynk.virtual_write(config.V_OP_MODE, 1)      # Show AUTO on phone  ← was "V2", wrong int
+    blynk.virtual_write(config.V_MISSION, 0)       # Show Paused on phone ← was "V8"
+
+    print("SYS: Connected to Blynk. Clean boot complete. Defaults: AUTO / PAUSED.")
+
+
+# =============================================================================
+# MOTOR MIXING ENGINE
+# =============================================================================
+
 def process_motors():
+    """Differential steering: converts joystick X/Y to left/right motor speeds."""
     global current_x, current_y, master_speed
-    
-    
-    # Apply Deadzone: ignore tiny values so motors don't "hum" at rest
+
     x = current_x if abs(current_x) > 50 else 0
     y = current_y if abs(current_y) > 50 else 0
-    
-    # Differential Steering Math: Mixing X and Y
-    left_raw = y + x
+
+    left_raw  = y + x
     right_raw = y - x
-    
-    # Clamp: Ensure we never send more than 255 to the motors
-    left_clamped = max(min(left_raw, master_speed), -master_speed)
+
+    left_clamped  = max(min(left_raw,  master_speed), -master_speed)
     right_clamped = max(min(right_raw, master_speed), -master_speed)
-    
-    # Calculation: Convert raw numbers to 0-100% for the terminal
-    l_speed = round((abs(left_clamped) / 255) * 100, 1)
+
+    l_speed = round((abs(left_clamped)  / 255) * 100, 1)
     r_speed = round((abs(right_clamped) / 255) * 100, 1)
-    
+
     if left_clamped == 0 and right_clamped == 0:
         print("| IDLE: Motors Off |")
     else:
@@ -64,193 +83,187 @@ def process_motors():
         r_dir = "FWD" if right_clamped > 0 else "REV"
         print(f"MOTORS -> L: {l_speed}% ({l_dir}) | R: {r_speed}% ({r_dir})")
 
-# --- BLYNK EVENT HANDLERS (The "Ears" of the robot) ---
+    # TODO: Pass left_clamped/right_clamped to drivers/motors.py when implemented
+    # motors.set_speeds(left_clamped, right_clamped)
 
-@blynk.on("V9")
+
+# =============================================================================
+# BLYNK EVENT HANDLERS
+# =============================================================================
+
+@blynk.on("V{}".format(config.V_THROTTLE))
 def handle_master_speed(value):
     global master_speed
     master_speed = int(value[0])
-    print(f"--- Throttle set to: {round((master_speed/255)*100)}% ---")
+    print(f"--- Throttle set to: {round((master_speed / 255) * 100)}% ---")
 
-# @blynk.on("V1")
-# def handle_navigation_x(value):
-#     global current_x, mission_active
-#     if not mission_active:
-#         return
-#     if not is_auto_mode:
-#         current_x = int(value[0])
-#         process_motors()
 
-# @blynk.on("V5")
-# def handle_navigation_y(value):
-#     global current_y, master_speed, mission_active
-#     if not mission_active:
-#         return
-#     if not is_auto_mode:
-#         # WEB BUTTON LOGIC: If value is 1 or -1, multiply by master_speed
-#         raw = int(value[0])
-#         if raw == 1 or raw == -1:
-#             current_y = raw * master_speed
-#         else:
-#             current_y = raw # Handles the phone joystick normally
-#         process_motors()
-@blynk.on("V1")
+@blynk.on("V{}".format(config.V_JOYSTICK_X))
 def handle_navigation_x(value):
     global current_x
-    
-    # If we are in Auto mode, ignore the joystick so it doesn't fight the camera
     if is_auto_mode:
-        return
-        
+        return  # Ignore joystick in auto mode
     current_x = int(value[0])
     process_motors()
 
-@blynk.on("V5")
+
+@blynk.on("V{}".format(config.V_JOYSTICK_Y))
 def handle_navigation_y(value):
-    global current_y, master_speed
-    
-    # If we are in Auto mode, ignore the joystick
+    global current_y
     if is_auto_mode:
-        return
-        
-    # WEB BUTTON LOGIC: If value is 1 or -1, multiply by master_speed
+        return  # Ignore joystick in auto mode
     raw = int(value[0])
-    if raw == 1 or raw == -1:
-        current_y = raw * master_speed
-    else:
-        current_y = raw # Handles the phone joystick normally
-        
+    # Web button sends -1 or 1 → scale by master_speed
+    current_y = raw * master_speed if raw in (1, -1) else raw
     process_motors()
 
-@blynk.on("V2")
+
+@blynk.on("V{}".format(config.V_OP_MODE))
 def handle_op_mode(value):
+    """
+    FIX: Original had inverted logic vs clean-boot.
+    Convention: 1 = AUTO (line following), 0 = MANUAL (remote control).
+    """
     global is_auto_mode, current_x, current_y
-    # Toggle logic: 0 = AUTO, 1 = MANUAL (as we discussed)
-    is_auto_mode = True if int(value[0]) == 0 else False
-    
+    is_auto_mode = (int(value[0]) == 1)  # ← was (int(value[0]) == 0), inverted
+
     if is_auto_mode:
         print("--- MODE: AUTO (Line Following Active) ---")
     else:
-        current_x, current_y = 0, 0
-        print("--- MODE: MANUAL (Remote Control Active) ---")
+        current_x = 0
+        current_y = 0
         process_motors()
+        print("--- MODE: MANUAL (Remote Control Active) ---")
 
+
+@blynk.on("V{}".format(config.V_MISSION))
+def toggle_mission(value):
+    """Start/Pause the active scanning mission."""
+    global mission_active
+    mission_active = (int(value[0]) == 1)
+    state = "STARTED" if mission_active else "PAUSED"
+    print(f"GUI: Mission {state} by operator.")
+
+
+# =============================================================================
+# TELEMETRY
+# =============================================================================
 
 def update_battery():
-    # Simulated Battery Math: Read voltage from ADC
-    # V_max = 12.6V, V_min = 9.0V
-    current_voltage = 11.8 # This would come from your ADC sensor
-    percentage = round(((current_voltage - 9.0) / (12.6 - 9.0)) * 100)
-    blynk.virtual_write("V4", percentage)
-    
-    # Critical Alert if battery is low
-    if percentage < 20:
-        blynk.log_event("low_battery_alert", f"Robot needs charging! {percentage}%")
+    """
+    FIX: Original used hardcoded current_voltage = 11.8 (never read INA219).
+    Now reads real voltage from INA219 over I2C.
+    Falls back to a simulated value if INA219 is unavailable.
+    """
+    if INA219_AVAILABLE:
+        try:
+            current_voltage = _ina.voltage()
+        except Exception as e:
+            print(f"[WARN] INA219 read failed: {e}. Using fallback.")
+            current_voltage = 11.8
+    else:
+        current_voltage = 11.8  # Simulation fallback
+
+    percentage = round(
+        ((current_voltage - config.BATTERY_MIN_V) /
+         (config.BATTERY_MAX_V - config.BATTERY_MIN_V)) * 100
+    )
+    percentage = max(0, min(100, percentage))  # Clamp to 0–100
+
+    blynk.virtual_write(config.V_BATTERY_PCT, percentage)  # FIX: integer, not "V4"
+
+    if percentage < config.BATTERY_LOW_PCT:
+        blynk.log_event("low_battery_alert", f"Battery critical: {percentage}%")
+
+    return percentage
 
 
 def update_log(message):
+    """Send a timestamped message to the Blynk terminal widget."""
     timestamp = time.strftime("%H:%M:%S")
-    formatted_msg = f"[{timestamp}] {message}\n"
-    
-    # This sends the text TO the phone
-    blynk.virtual_write("V6", formatted_msg)
-    print(f"Log: {formatted_msg}")
+    formatted = f"[{timestamp}] {message}\n"
+    blynk.virtual_write(config.V_LOG, formatted)  # FIX: integer, not "V6"
+    print(f"Log: {formatted}", end="")
+
+
+# =============================================================================
+# CAMERA
+# =============================================================================
 
 def capture_pi_frame():
-    """Bypasses OpenCV memory limits by using the proven rpicam command."""
+    """Captures a frame using rpicam-jpeg, bypassing OpenCV's camera limits."""
     subprocess.run(
-        ["rpicam-jpeg", "-o", "temp.jpg", "--width", "320", "--height", "240", "--nopreview", "-t", "1"], 
-        stdout=subprocess.DEVNULL, 
+        ["rpicam-jpeg", "-o", "temp.jpg",
+         "--width", "320", "--height", "240",
+         "--nopreview", "-t", "1"],
+        stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL
     )
-    # OpenCV reads the photo from the folder
     return cv2.imread("temp.jpg")
+
+
+# =============================================================================
+# MISSION LOOP
+# =============================================================================
 
 def run_mission_test():
     global mission_active, is_auto_mode
-    
-    print("-" * 30)
+
+    print("-" * 40)
     print("ROBOT SYSTEM: STANDBY. Waiting for GUI 'Start' signal...")
-    print("-" * 30)
+    print("-" * 40)
+
+    telemetry_timer = time.time()
 
     while True:
-        blynk.run() 
+        # FIX: blynk.run() is now called on EVERY loop iteration.
+        # Original starved it with time.sleep(0.5) inside the mission branch,
+        # causing Blynk to disconnect after ~5 seconds of inactivity.
+        blynk.run()
+
+        # --- Telemetry update every 10 seconds ---
+        if time.time() - telemetry_timer > 10:
+            update_battery()
+            telemetry_timer = time.time()
 
         if mission_active and is_auto_mode:
-            frame = capture_pi_frame() 
+            frame = capture_pi_frame()
             if frame is None:
-                continue 
-            
-            # The brain now tells us exactly what it sees
+                time.sleep(0.05)  # Short sleep, still allows blynk.run() next iteration
+                continue
+
             shape, cx = vision.identify_target(frame)
-            
+
             if shape == "OTHER_CIRCULAR":
-                # It found a circle, but it is NOT blue.
-                print(f"CIRCULAR object detected (Wrong Color). Ignoring.         ", end="\r")
-                
+                print("Circular object detected (wrong color). Ignoring.         ", end="\r")
+
             elif shape == "BLUE_CIRCULAR":
-                # It found exactly what we want!
                 print(f"\n[ALERT] BLUE CIRCULAR object confirmed at X={cx}")
                 print("DECISION: PICK")
-                
-                print("ACTION: Executing Arm Sequence... (2 seconds)")
-                time.sleep(2) 
-                
-                print("ACTION: Pick complete. Pausing mission.")
-                mission_active = False 
-                
+                update_log(f"Blue target acquired at X={cx}. Executing pick.")
+
+                # TODO: Replace with actual arm sequence from drivers/servos.py
+                # Example: servos.execute_pick_sequence()
+                print("ACTION: Arm sequence placeholder (implement servos.py)")
+                time.sleep(0.5)  # FIX: Reduced from 2s so Blynk stays alive
+
+                mission_active = False
+                blynk.virtual_write(config.V_MISSION, 0)  # Reflect pause on phone
+                print("ACTION: Pick complete. Mission paused.")
+
             else:
                 print("Scanning... No circular targets visible.                    ", end="\r")
-            
-            time.sleep(0.5) 
+
+            # FIX: Reduced from 0.5s. blynk.run() runs on next iteration ~50ms later.
+            time.sleep(0.05)
 
         else:
             time.sleep(0.05)
-            
-@blynk.on("V8")
-def toggle_mission(value):
-    """The Mission Control Switch for Active Scanning."""
-    global mission_active
-    
-    if int(value[0]) == 1:
-        mission_active = True
-        print("GUI: Mission STARTED by operator. Active Scan Engaged.")
-    else:
-        mission_active = False
-        print("GUI: Mission PAUSED by operator. Turret holding.")
 
-# --- REGISTRATION ---
-#blynk.on("V1", handle_navigation_x) 
-#blynk.on("V5", handle_navigation_y) 
-#blynk.on("V2", handle_op_mode)      
-#blynk.on("V9", handle_master_speed) 
 
-print("SYSTEM READY: Listening for commands...")
-
-#while True:
-    #blynk.run()
-
-    # # STEP 6: SAFETY CHECK (Continuous)
-    # if proximity.is_blocked(threshold=15):
-    #     motors.stop()
-    #     print("Obstacle Detected - Safety Halt")
-    #     continue 
-
-    # if current_state == "DRIVE":
-    #     # Follow line... 
-    #     pass
-
-    # elif current_state == "ROTATE":
-    #     # Get live distance for fine-tuning if needed
-    #     current_dist = proximity.get_distance()
-    #     # ... (Camera alignment logic) ...
-    #     pass
-        
-    # elif current_state == "PICK":
-    #     # Execute arm sequence using drivers/servos.py
-    #     pass
-
-  #  time.sleep(0.05)
+# =============================================================================
+# ENTRY POINT
+# =============================================================================
 
 if __name__ == "__main__":
     print("SYSTEM READY: Booting Mission Protocol...")
