@@ -12,7 +12,7 @@ try:
     from drivers import servos
     import dashboard
 except ImportError as e:
-    exit(f"[FATAL] Missing a file! Check your folder structure. Error: {e}")
+    sys.exit(f"[FATAL] Missing a file! Check your folder structure. Error: {e}")
 
 # --- 2. System Boot & Hardware Init ---
 print("========================================")
@@ -21,7 +21,7 @@ print("========================================")
 
 pi = pigpio.pi()
 if not pi.connected:
-    exit("[FATAL] pigpio daemon not running. Run: sudo pigpiod")
+    sys.exit("[FATAL] pigpio daemon not running. Run: sudo pigpiod")
 
 # Init Drive Motors & Arm Servos
 motors.init()
