@@ -24,7 +24,7 @@ import sys
 # sys.path.insert adds the parent folder to Python's search path.
 # This lets us import config and drivers from the project root even though
 # this test script might be run from a different folder.
-sys.path.insert(0, '/home/pi/your_project_folder')  # ← change this to your actual path
+sys.path.insert(0, '/home/patrolrobot/SecurityRobot')  # ← change this to your actual path
 
 import config
 from drivers import motors

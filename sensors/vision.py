@@ -1,8 +1,19 @@
 # =============================================================================
-# sensors/vision.py — Camera Target Identification (Corrected)
-# FIX: Original sampled a single pixel at the centroid for color detection.
-#      One noise/shadow pixel was enough to cause false negatives.
-#      Now samples a 10x10 pixel region and uses the median hue.
+# sensors/vision.py — Camera Target Identification
+# Detects the largest DARK/BLACK circular object in a frame.
+#
+# HOW IT WORKS:
+#   1. Convert BGR to HSV
+#   2. Mask for BLACK pixels — low Value (brightness), any Hue
+#   3. Morphological opening — removes noise
+#   4. Find largest contour — ignores anything under 300px
+#   5. Shape check — >5 polygon corners = circular
+#   6. Return centroid CX for alignment
+#
+# RETURNS:
+#   ("BLACK_CIRCULAR", cx)  — black circle found
+#   ("NON_CIRCULAR",   cx)  — dark object found but not circular
+#   ("NONE",          None) — nothing detected
 # =============================================================================
 
 import cv2
@@ -10,39 +21,28 @@ import numpy as np
 
 
 def identify_target(frame):
-    """
-    Scans a frame for the largest colored circular object and classifies it.
-
-    Steps:
-      1. Convert to HSV and threshold on Saturation to isolate colored objects.
-      2. Clean up noise with morphological opening.
-      3. Find the largest contour. Ignore if area < 500px (too small / noise).
-      4. Classify shape: >7 polygon corners = circular.
-      5. FIX: Sample a 10x10 region around the centroid (not a single pixel)
-         and use the median hue for reliable color classification.
-
-    Returns:
-        ("BLUE_CIRCULAR",  cx)  — blue circle found, cx = horizontal center
-        ("OTHER_CIRCULAR", cx)  — circle found but wrong color
-        ("NON_CIRCULAR",  None) — largest object is not circular
-        ("NONE",          None) — nothing detected or frame is empty
-    """
     if frame is None:
         return "NONE", None
 
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
     h, w = frame.shape[:2]
 
-    # --- Step 1: Isolate any colored (non-grey) area via saturation ---
-    _, sat_mask = cv2.threshold(hsv[:, :, 1], 70, 255, cv2.THRESH_BINARY)
+    # --- STEP 1: Mask for BLACK pixels ---
+    # Black = low Value (dark), Saturation can be anything
+    # HSV: H=0-180, S=0-255, V=0-60 (very dark)
+    lower_black = np.array([0,   0,   0  ])
+    upper_black = np.array([180, 255, 80 ])
 
-    # --- Step 2: Morphological cleanup (removes single-pixel noise) ---
+    black_mask = cv2.inRange(hsv, lower_black, upper_black)
+
+    # --- STEP 2: Morphological cleanup ---
     kernel = np.ones((5, 5), np.uint8)
-    sat_mask = cv2.morphologyEx(sat_mask, cv2.MORPH_OPEN, kernel)
+    black_mask = cv2.morphologyEx(black_mask, cv2.MORPH_OPEN, kernel)
+    black_mask = cv2.dilate(black_mask, kernel, iterations=1)
 
-    # --- Step 3: Find contours ---
+    # --- STEP 3: Find contours ---
     contours, _ = cv2.findContours(
-        sat_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+        black_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
     )
 
     if not contours:
@@ -50,48 +50,76 @@ def identify_target(frame):
 
     biggest_blob = max(contours, key=cv2.contourArea)
 
-    if cv2.contourArea(biggest_blob) < 500:
+    if cv2.contourArea(biggest_blob) < 300:
         return "NONE", None
 
-    # --- Step 4: Shape classification ---
-    epsilon = 0.02 * cv2.arcLength(biggest_blob, True)
-    approx = cv2.approxPolyDP(biggest_blob, epsilon, True)
-
-    if len(approx) <= 7:
-        return "NON_CIRCULAR", None
-
-    # --- Step 5: Get centroid ---
+    # --- STEP 4: Get centroid and Area ---
     M = cv2.moments(biggest_blob)
     if M["m00"] == 0:
         return "NONE", None
 
     cx = int(M["m10"] / M["m00"])
-    cy = int(M["m01"] / M["m00"])
-
-    # Clamp centroid to frame bounds
     cx = max(0, min(cx, w - 1))
-    cy = max(0, min(cy, h - 1))
+    
+    area = cv2.contourArea(biggest_blob)
+    perimeter = cv2.arcLength(biggest_blob, True)
+    
+    if perimeter == 0:
+        return "NONE", None
 
-    # --- FIX: Sample 10x10 region, use MEDIAN hue (robust against noise) ---
-    region_r = 10
-    x1 = max(0, cx - region_r)
-    x2 = min(w, cx + region_r)
-    y1 = max(0, cy - region_r)
-    y2 = min(h, cy + region_r)
-
-    region_hsv = hsv[y1:y2, x1:x2]
-
-    # Only use pixels that are actually saturated (part of the object, not bg)
-    sat_region = region_hsv[:, :, 1]
-    colored_pixels = region_hsv[sat_region > 70]
-
-    if len(colored_pixels) == 0:
-        return "OTHER_CIRCULAR", cx
-
-    median_hue = int(np.median(colored_pixels[:, 0]))
-
-    # Blue in OpenCV HSV: hue range 100–140
-    if 100 <= median_hue <= 140:
-        return "BLUE_CIRCULAR", cx
+    # --- STEP 5: True Shape Classification (Circularity) ---
+    # Formula: 4 * pi * (Area / Perimeter^2)
+    # 1.0 = Perfect Circle. Shadows and wires will be < 0.5.
+    circularity = 4 * np.pi * (area / (perimeter * perimeter))
+    
+    # Require an 80% match to a perfect circle
+    if circularity > 0.60: 
+        return "BLACK_CIRCULAR", cx
     else:
-        return "OTHER_CIRCULAR", cx
+        return "NON_CIRCULAR", cx
+
+
+def draw_debug(frame):
+    """
+    Draws contours and detection label onto frame for visual debugging.
+    Usage:
+        annotated = vision.draw_debug(frame)
+        cv2.imwrite("debug.jpg", annotated)
+    """
+    if frame is None:
+        return frame
+
+    result = frame.copy()
+    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    h, w = frame.shape[:2]
+
+    lower_black = np.array([0,   0,   0  ])
+    upper_black = np.array([180, 255, 80 ])
+    black_mask  = cv2.inRange(hsv, lower_black, upper_black)
+    kernel      = np.ones((5, 5), np.uint8)
+    black_mask  = cv2.morphologyEx(black_mask, cv2.MORPH_OPEN, kernel)
+
+    contours, _ = cv2.findContours(
+        black_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+    )
+
+    if not contours:
+        cv2.putText(result, "NONE", (10, 30),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+        return result
+
+    biggest_blob = max(contours, key=cv2.contourArea)
+    cv2.drawContours(result, [biggest_blob], -1, (0, 255, 0), 2)
+
+    shape, cx = identify_target(frame)
+    label = f"{shape} cx={cx}"
+    cv2.putText(result, label, (10, 30),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+
+    if cx is not None:
+        M = cv2.moments(biggest_blob)
+        if M["m00"] != 0:
+            cy_val = int(M["m01"] / M["m00"])
+            cv2.circle(result, (cx, cy_val), 8, (0, 0, 255), -1)
+
+    return result

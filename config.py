@@ -38,13 +38,16 @@ IR_SENSOR_5 = 20    # GPIO20, Physical Pin 38 (Far Right)
 SENSOR_LEFT  = IR_SENSOR_1
 SENSOR_RIGHT = IR_SENSOR_5
 
-# --- 6. 4x SG90 Servo Motors (pigpio hardware PWM) ---
-SERVO_BASE     = 19  # GPIO19, Physical Pin 35 - Waist/Base rotation
-SERVO_SHOULDER = 21  # GPIO21, Physical Pin 40 - Shoulder joint
-SERVO_ELBOW    = 26  # GPIO26, Physical Pin 37 - Elbow joint
-SERVO_GRIPPER  = 14  # GPIO14, Physical Pin 8  - Gripper open/close
-# NOTE: GPIO14 is UART TX pin. Disable serial console first:
-#   sudo raspi-config -> Interface Options -> Serial Port -> disable login shell
+# --- 5. PCA9685 I2C Servo Driver & Channels ---
+# Pin 3 (SDA) and Pin 5 (SCL) control all arm servos via these channel slots.
+# Solder address pad A0 on the PCA board if you experience I2C address conflicts!
+PCA_ADDRESS     = 0x40  # Default I2C address for the PCA9685
+
+SERVO_BASE      = 0     # PCA9685 Channel 0 - Waist/Base rotation
+SERVO_SHOULDER  = 8     # PCA9685 Channel 1 - Shoulder joint
+SERVO_ELBOW     = 12     # PCA9685 Channel 2 - Elbow joint
+SERVO_WRIST     = 7     # PCA9685 Channel 3 - Wrist pitch/roll joint (5th DOF)
+SERVO_GRIPPER   = 3     # PCA9685 Channel 4 - Gripper open/close
 
 # --- 7. INA219 Power Monitor (Hardware I2C) ---
 INA219_SDA     = 2      # GPIO2, Physical Pin 3 (I2C SDA)
