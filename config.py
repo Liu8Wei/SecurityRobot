@@ -46,7 +46,6 @@ PCA_ADDRESS     = 0x40  # Default I2C address for the PCA9685
 SERVO_BASE      = 0     # PCA9685 Channel 0 - Waist/Base rotation
 SERVO_SHOULDER  = 8     # PCA9685 Channel 1 - Shoulder joint
 SERVO_ELBOW     = 12     # PCA9685 Channel 2 - Elbow joint
-SERVO_WRIST     = 7     # PCA9685 Channel 3 - Wrist pitch/roll joint (5th DOF)
 SERVO_GRIPPER   = 3     # PCA9685 Channel 4 - Gripper open/close
 
 # --- 7. INA219 Power Monitor (Hardware I2C) ---
