@@ -2,7 +2,6 @@ import time
 import threading
 import pigpio
 import cv2
-import numpy as np
 import sys
 
 # --- 1. Import Your Modules ---
@@ -11,8 +10,9 @@ try:
     from drivers import motors
     from drivers import servos
     import dashboard
+    import vision
 except ImportError as e:
-    sys.exit(f"[FATAL] Missing a file! Check your folder structure. Error: {e}")
+    exit(f"[FATAL] Missing a file! Check your folder structure. Error: {e}")
 
 # --- 2. System Boot & Hardware Init ---
 print("========================================")
@@ -21,7 +21,7 @@ print("========================================")
 
 pi = pigpio.pi()
 if not pi.connected:
-    sys.exit("[FATAL] pigpio daemon not running. Run: sudo pigpiod")
+    exit("[FATAL] pigpio daemon not running. Run: sudo pigpiod")
 
 # Init Drive Motors & Arm Servos
 motors.init()
@@ -88,81 +88,7 @@ def read_ultrasonic():
         return round(dist, 1) 
     return dashboard.state["distance"]
 
-# --- 6. Vision Processing Logic ---
-def process_vision(frame):
-    """
-    Analyzes the camera frame to detect the 4 stations:
-    Black Cube, White Cube, Pentagon Pattern A, Pentagon Pattern B
-    """
-    if frame is None:
-        return "NO SIGNAL", None
-
-    # Convert to HSV for color checking, Gray for shape detection
-    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    
-    # Blur and detect edges
-    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-    edges = cv2.Canny(blurred, 50, 150)
-    
-    # Connect broken edges
-    kernel = np.ones((5, 5), np.uint8)
-    edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel)
-
-    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    
-    result_frame = frame.copy()
-    status = "Scanning for targets..."
-
-    for cnt in contours:
-        area = cv2.contourArea(cnt)
-        if area < 500: # Ignore tiny noise
-            continue
-
-        # Approximate the polygon to count corners
-        peri = cv2.arcLength(cnt, True)
-        approx = cv2.approxPolyDP(cnt, 0.04 * peri, True)
-        sides = len(approx)
-
-        # Check if it has 4 sides (Cube) or 5 sides (Pentagon)
-        if sides in [4, 5]:
-            x, y, w, h = cv2.boundingRect(approx)
-            cx, cy = x + w // 2, y + h // 2
-            
-            # Boundary check
-            if cy >= frame.shape[0] or cx >= frame.shape[1]:
-                continue
-
-            # Sample the center pixel in HSV to determine Black vs White
-            h_val, s_val, v_val = hsv[cy, cx]
-
-            shape_name = ""
-            if sides == 4:
-                # Check if it's roughly a square (Cube)
-                aspect_ratio = float(w) / h
-                if 0.75 <= aspect_ratio <= 1.3:
-                    if v_val < 80:
-                        shape_name = "Black Cube"
-                    elif v_val > 150 and s_val < 60:
-                        shape_name = "White Cube"
-            elif sides == 5:
-                # Pentagon
-                if v_val < 100:
-                    shape_name = "Pentagon Pattern A (Dark)"
-                else:
-                    shape_name = "Pentagon Pattern B (Light)"
-
-            if shape_name:
-                status = f"VISION LOCK: {shape_name}"
-                # Draw the bounding box and text
-                cv2.drawContours(result_frame, [approx], -1, (0, 255, 0), 3)
-                cv2.putText(result_frame, shape_name, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-                cv2.circle(result_frame, (cx, cy), 5, (0, 0, 255), -1)
-                break # Stop looking after finding the first valid target
-
-    return status, result_frame
-
-# --- 7. MAIN CONTROL LOOP ---
+# --- 6. MAIN CONTROL LOOP ---
 dashboard.state["nav_status"] = "Ready"
 try:
     while True:
@@ -170,7 +96,15 @@ try:
         if camera:
             try:
                 buf = cv2.cvtColor(camera.capture_array(), cv2.COLOR_RGB2BGR)
-                v_status, out_frame = process_vision(buf)
+                
+                # --- CAMERA FLIP CONTROL ---
+                # Change this number if the camera is upside down or mirrored!
+                # 0 = Flip Vertically
+                # 1 = Flip Horizontally
+                # -1 = Flip Both (Vertically and Horizontally)
+                buf = cv2.flip(buf, -1) 
+                
+                v_status, out_frame = vision.process_frame(buf)
                 dashboard.state["vision_status"] = v_status
                 dashboard.set_frame(out_frame)
             except: 
@@ -224,8 +158,7 @@ try:
                 motors.stop()
                 dashboard.state["nav_status"] = f"OBSTACLE ({dist}cm) - STOPPED"
             else:
-                # --- FLOOR PATTERN / SHAPE DETECTION ---
-                # Treating the 5 IR sensors like a barcode reader for floor markers
+                # --- FLOOR PATTERN / SHAPE DETECTION (Barcode Scanner) ---
                 if ir_readings == [1, 1, 1, 1, 1]:
                     motors.stop()
                     dashboard.state["nav_status"] = "MARKER DETECTED: Black Cube"
